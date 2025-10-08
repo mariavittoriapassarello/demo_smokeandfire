@@ -13,6 +13,9 @@ Fine-tuning of a YOLOv11 model on Red Hat OpenShift AI 2.23. The training has be
 
 
 
+The fine-tuned model is then deployed on OpenShift AI with the Model Serving component (no GPU required, Advanced deployment) and the inference endpoint is integrated in a streamlit application for real-time Fire and Smoke detection
+
+
 
 
 Improvements to be made 
@@ -24,3 +27,4 @@ Improvements to be made
 - generate training metrics, graphs, and plots as pipeline artifacts for visualization in the OpenShift AI dashboard.
 - try Kubeflow Trainer
 - integrate bias and drift monitoring with Trusty AI
+
