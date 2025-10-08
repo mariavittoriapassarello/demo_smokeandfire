@@ -1,0 +1,634 @@
+# PIPELINE DEFINITION
+# Name: yolo-custom-training-pipeline-test
+# Description: Dense Neural Network Image Detector based on YOLO
+# Inputs:
+#    hyperparameters: dict
+#    version: str
+components:
+  comp-convert-to-onnx:
+    executorLabel: exec-convert-to-onnx
+    inputDefinitions:
+      artifacts:
+        fine_tuned_model_zip:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        onnx_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-fetch-data:
+    executorLabel: exec-fetch-data
+    inputDefinitions:
+      parameters:
+        model_filename:
+          defaultValue: yolo11n.pt
+          isOptional: true
+          parameterType: STRING
+        rf_format:
+          defaultValue: yolov11
+          isOptional: true
+          parameterType: STRING
+        rf_project:
+          defaultValue: fire-smoke-detection-yolov11
+          isOptional: true
+          parameterType: STRING
+        rf_version:
+          defaultValue: 2.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        rf_workspace:
+          defaultValue: sayed-gamall
+          isOptional: true
+          parameterType: STRING
+        version:
+          parameterType: STRING
+        workdir:
+          defaultValue: tmp/rf-workdir
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-fetch-model:
+    executorLabel: exec-fetch-model
+    inputDefinitions:
+      parameters:
+        hyperparameters:
+          parameterType: STRUCT
+        model_name:
+          parameterType: STRING
+        version:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        original_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+  comp-push-to-s3-and-model-registry:
+    executorLabel: exec-push-to-s3-and-model-registry
+    inputDefinitions:
+      artifacts:
+        onnx_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        accuracy:
+          defaultValue: 0.55
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+        cluster_domain:
+          defaultValue: apps.cluster-2lxjg.2lxjg.sandbox2810.opentlc.com
+          isOptional: true
+          parameterType: STRING
+        description:
+          defaultValue: YOLO model fine tuned on images of smoke and fire
+          isOptional: true
+          parameterType: STRING
+        epoch:
+          defaultValue: 1.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        fraction:
+          defaultValue: 0.1
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+        is_secure:
+          defaultValue: false
+          isOptional: true
+          parameterType: BOOLEAN
+        license_name:
+          defaultValue: apache-2.0
+          isOptional: true
+          parameterType: STRING
+        registered_model_name:
+          defaultValue: smokeandfire
+          isOptional: true
+          parameterType: STRING
+        username:
+          defaultValue: Maria Vittoria Passarello
+          isOptional: true
+          parameterType: STRING
+        version:
+          parameterType: STRING
+        version_to_mr:
+          defaultValue: 0.0.8
+          isOptional: true
+          parameterType: STRING
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        base_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        dataset_zip:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        batch:
+          defaultValue: 2.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        epochs:
+          defaultValue: 1.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+        fraction:
+          defaultValue: 0.1
+          isOptional: true
+          parameterType: NUMBER_DOUBLE
+        imgsz:
+          defaultValue: 640.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        fine_tuned_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-convert-to-onnx:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - convert_to_onnx
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'onnx>=1.14.0'\
+          \ 'onnxruntime>=1.17.0' 'onnxslim>=0.1.67' 'onnxsim>=0.4.36' && \"$0\" \"\
+          $@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef convert_to_onnx(\n    fine_tuned_model_zip: Input[Model],  \n\
+          \    onnx_model: Output[Model],       \n):\n    from pathlib import Path\n\
+          \    from shutil import copy2\n    from ultralytics import YOLO\n    import\
+          \ zipfile\n\n\n    #prendo file zip\n    model_zip_path = Path(fine_tuned_model_zip.path)\n\
+          \    if not model_zip_path.exists():\n        raise FileNotFoundError(f\"\
+          File zip del modello non trovato: {model_zip_path}\")\n\n    #dir temporanea\n\
+          \n    work = Path(\"/tmp/work\"); work.mkdir(parents=True, exist_ok=True)\n\
+          \    extract_dir = work / \"unzipped_model\"\n    extract_dir.mkdir(parents=True,\
+          \ exist_ok=True)\n\n    #unzip\n    with zipfile.ZipFile(model_zip_path,\
+          \ \"r\") as zf:\n        zf.extractall(extract_dir)\n        print(f\"[INFO]\
+          \ Estratto {len(zf.namelist())} file da {model_zip_path} in {extract_dir}\"\
+          )\n\n    # Trova il file best.pt (o last.pt se non presente)\n    weights\
+          \ = next(extract_dir.rglob(\"best.pt\"), None)\n    if not weights:\n  \
+          \      weights = next(extract_dir.rglob(\"last.pt\"), None)\n    if not\
+          \ weights or not weights.exists():\n        raise FileNotFoundError(f\"\
+          Nessun file .pt trovato nello zip estratto in {extract_dir}\")\n    print(f\"\
+          [INFO] Peso trovato: {weights}\")\n\n    export_dir = work / \"runs\" /\
+          \ \"export\"\n    export_dir.mkdir(parents=True, exist_ok=True)\n\n    #\
+          \ esporta in formato ONNX\n    print(\"Esportazione da YOLO.pt a ONNX\"\
+          )\n    result = YOLO(str(weights)).export(\n        format=\"onnx\",\n \
+          \       project=str(export_dir),\n        name=\"onnx\",\n        exist_ok=True,\n\
+          \    )\n\n    # trova file .onnx \n    onnx_path = None\n    if result and\
+          \ Path(result).exists():\n        onnx_path = Path(result)\n    else:\n\
+          \        candidates = list((export_dir / \"onnx\").rglob(\"*.onnx\"))\n\
+          \        if not candidates:\n            raise FileNotFoundError(\"File\
+          \ .onnx non trovato dopo l\u2019esportazione\")\n        onnx_path = candidates[0]\n\
+          \    print(f\" Modello ONNX generato: {onnx_path} ({onnx_path.stat().st_size}\
+          \ bytes)\")\n\n    # copia il file ONNX nell\u2019output artifact\n    out_dir\
+          \ = Path(onnx_model.path)\n    out_dir.mkdir(parents=True, exist_ok=True)\n\
+          \    copy2(onnx_path, out_dir / \"model.onnx\")\n\n    # metadata\n    onnx_model.metadata[\"\
+          framework\"] = \"ultralytics\"\n    onnx_model.metadata[\"format\"] = \"\
+          onnx\"\n    onnx_model.metadata[\"source\"] = str(weights)\n    onnx_model.metadata[\"\
+          compression\"] = \"unzipped\"\n\n    print(f\"Model saved to: {out_dir /\
+          \ 'model.onnx'}\")\n\n"
+        image: ultralytics/ultralytics:latest
+    exec-fetch-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - fetch_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'roboflow>=1.1.28'\
+          \ 'python-dotenv>=1.0.1' 'pyyaml>=6.0.1' 'ultralytics>=8.3.0' && \"$0\"\
+          \ \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef fetch_data(\n    # ---- parametri Roboflow ----\n    dataset:\
+          \ Output[Dataset], \n    version: str,\n    rf_workspace: str = \"sayed-gamall\"\
+          ,\n    rf_project: str = \"fire-smoke-detection-yolov11\",\n    rf_version:\
+          \ int = 2,\n    model_filename: str = \"yolo11n.pt\",\n    workdir: str\
+          \ = \"tmp/rf-workdir\",\n    rf_format: str = \"yolov11\",\n    # ---- output\
+          \ KFP ----\n):\n    \"\"\"\n    Scarica dataset da Roboflow usando ROBOFLOW_KEY\
+          \ (da Secret),\n    aggiorna data.yaml con path relativi,\n    impacchetta\
+          \ dataset e modello come artifact KFP.\n    \"\"\"\n    import os, sys,\
+          \ zipfile, yaml, shutil\n    from pathlib import Path\n    ROBOFLOW_KEY=os.getenv(\"\
+          ROBOFLOW_API_KEY\")\n    if not ROBOFLOW_KEY:\n        raise RuntimeError(\n\
+          \            \"ROBOFLOW_KEY non trovata. \"\n        )\n\n\n    workdir\
+          \ = Path(workdir)\n    workdir.mkdir(parents=True, exist_ok=True)\n    os.chdir(workdir)\n\
+          \    print(f\"working directory: {workdir}\")\n\n\n    #download data\n\
+          \    from roboflow import Roboflow\n    rf = Roboflow(api_key=ROBOFLOW_KEY)\n\
+          \    project = rf.workspace(rf_workspace).project(rf_project)\n    version\
+          \ = project.version(rf_version)\n\n\n\n    rf_ds = version.download(rf_format)\
+          \ \n    # Ricava il path locale\n    if hasattr(rf_ds, \"location\"):\n\
+          \        dataset_dir = Path(rf_ds.location)\n        print(f\"[INFO] Dataset\
+          \ path: {dataset_dir}\")\n    elif isinstance(rf_ds, str):\n        dataset_dir\
+          \ = Path(rf_ds)\n    else:\n        raise TypeError(f\"not possible to find\
+          \ local path from: {type(rf_ds)}\")\n\n\n    data_yaml = dataset_dir / \"\
+          data.yaml\"\n    if not data_yaml.exists():\n        raise FileNotFoundError(f\"\
+          file data.yaml not found in {data_yaml}\")\n\n    with open(data_yaml, \"\
+          r\") as f:\n        data = yaml.safe_load(f)\n\n    data[\"train\"] = \"\
+          train/images\"\n    data[\"val\"] = \"valid/images\"\n    data[\"test\"\
+          ] = \"test/images\"\n\n    with open(data_yaml, \"w\") as f:\n        yaml.safe_dump(data,\
+          \ f, default_flow_style=False)\n\n    print(\"data.yaml updated with paths\"\
+          )\n\n    dataset.path = dataset.path + \".zip\"\n    with zipfile.ZipFile(dataset.path,\
+          \ \"w\", zipfile.ZIP_DEFLATED) as zf:\n        for entry in dataset_dir.rglob(\"\
+          *\"):\n            zf.write(entry, entry.relative_to(dataset_dir))\n   \
+          \ print(f\"Dataset in {dataset.path}\")\n\n"
+        image: python:3.11
+    exec-fetch-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - fetch_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'huggingface_hub'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef fetch_model(\n    model_name: str,\n    version: str,\n    hyperparameters:\
+          \ dict,\n    original_model: Output[Model],\n):\n    try:\n        import\
+          \ os\n        import zipfile\n        from pathlib import Path\n       \
+          \ import huggingface_hub as hf\n    except Exception as e:\n        raise\
+          \ e\n\n    HF_TOKEN: str = os.getenv(\"HF_TOKEN\")\n\n    # Download model\
+          \ checkpoint from HuggingFace repositories\n    yolo_path: str = \"/\".join((\"\
+          /tmp/\", model_name))\n    os.makedirs(yolo_path, exist_ok=True)\n\n   \
+          \ print(f\"Downloading model checkpoint: {model_name}\")\n    model_path\
+          \ = hf.snapshot_download(repo_id=model_name,\n                         \
+          \           allow_patterns=hyperparameters.get(\"checkpoint\"),\n      \
+          \                              revision=\"main\",\n                    \
+          \                token=HF_TOKEN,\n                                    local_dir=yolo_path)\n\
+          \n    # save output dataset to S3\n    original_model._set_path(original_model.path\
+          \ + \".zip\")\n    srcdir = Path(yolo_path)\n\n    with zipfile.ZipFile(original_model.path,\
+          \ \"w\", zipfile.ZIP_DEFLATED) as zip_file:\n        for entry in srcdir.rglob(\"\
+          *\"):\n            zip_file.write(entry, entry.relative_to(srcdir))\n\n"
+        image: python:3.11
+    exec-push-to-s3-and-model-registry:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - push_to_s3_and_model_registry
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pip==24.2'\
+          \ 'setuptools==74.1.3' 'boto3==1.36.12' 'model-registry' && \"$0\" \"$@\"\
+          \n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef push_to_s3_and_model_registry(\n    onnx_model: Input[Model],\
+          \   \n    version: str,\n    registered_model_name: str = \"smokeandfire\"\
+          ,\n    version_to_mr: str = \"0.0.8\",\n    username: str = \"Maria Vittoria\
+          \ Passarello\",\n    cluster_domain: str = \"apps.cluster-2lxjg.2lxjg.sandbox2810.opentlc.com\"\
+          ,\n    description: str = \"YOLO model fine tuned on images of smoke and\
+          \ fire\",\n    accuracy: float = 0.55,\n    fraction: float = 0.1,\n   \
+          \ epoch: int = 1,\n    license_name: str = \"apache-2.0\",\n    is_secure:\
+          \ bool = False, \n):\n\n\n    import os, time, json\n    from pathlib import\
+          \ Path\n    from model_registry import ModelRegistry\n    from model_registry.utils\
+          \ import S3Params\n    from model_registry.exceptions import StoreError\n\
+          \    from os import environ\n\n\n    # look for model \n\n    root = Path(onnx_model.path)\n\
+          \    onnx_path = root / \"model.onnx\"\n    if not onnx_path.exists():\n\
+          \        try:\n            onnx_path = next(root.rglob(\"*.onnx\"))\n  \
+          \      except StopIteration:\n            raise FileNotFoundError(f\"Nessun\
+          \ file .onnx trovato in {root}\")\n\n    #get s3 credentials\n    AWS_S3_ENDPOINT\
+          \      = os.environ.get(\"AWS_S3_ENDPOINT\", \"\")\n    AWS_ACCESS_KEY_ID\
+          \    = os.environ.get(\"AWS_ACCESS_KEY_ID\", \"\")\n    AWS_SECRET_ACCESS_KEY=\
+          \ os.environ.get(\"AWS_SECRET_ACCESS_KEY\", \"\")\n    AWS_S3_BUCKET   \
+          \     = os.environ.get(\"AWS_S3_BUCKET\", \"\")\n\n    if not AWS_S3_BUCKET:\n\
+          \        raise RuntimeError(\"AWS_S3_BUCKET not found\")\n\n    environ[\"\
+          KF_PIPELINES_SA_TOKEN_PATH\"] = \"/var/run/secrets/kubernetes.io/serviceaccount/token\"\
+          \n\n\n    s3_prefix = f\"{registered_model_name}/{version}\"\n    model_registry_url\
+          \ = f\"https://model-registry1-rest.{cluster_domain}\"\n    registry = ModelRegistry(server_address=model_registry_url,\
+          \ port=443, author=username, is_secure=is_secure)\n\n    minio_endpoint\
+          \ = \"https://minio-api-minio.apps.cluster-2lxjg.2lxjg.sandbox2810.opentlc.com\"\
+          \n\n\n    s3_upload_params = S3Params(\n        bucket_name=AWS_S3_BUCKET,\n\
+          \        s3_prefix=s3_prefix,\n    )\n\n\n    url_dashboard_base = f\"https://rhods-dashboard-redhat-ods-applications.{cluster_domain}\"\
+          \n    created, link, version_id = False, \"\", None\n\n    try:\n      \
+          \  registered_model = registry.upload_artifact_and_register_model(\n   \
+          \         name=registered_model_name,\n            model_files_path=str(onnx_path),\n\
+          \            model_format_name=\"onnx\",\n            model_format_version=\"\
+          1\",\n            author=username,\n            version=version_to_mr,\n\
+          \            description=description,\n            metadata={\n        \
+          \        \"accuracy\": accuracy,\n                \"fraction\": fraction,\n\
+          \                \"epoch\": epoch,\n                \"license\": license_name,\n\
+          \            },\n            upload_params=s3_upload_params,\n        )\n\
+          \        created = True\n        mv = registry.get_model_version(registered_model_name,\
+          \ version_to_mr)\n        version_id = getattr(mv, \"id\", None)\n     \
+          \   if version_id is not None:\n            link = f\"{url_dashboard_base}/modelRegistry/{username}-registry/registeredModels/1/versions/{version_id}/details\"\
+          \n    except StoreError:\n        mv = registry.get_model_version(registered_model_name,\
+          \ version_to_mr)\n        version_id = getattr(mv, \"id\", None)\n     \
+          \   if version_id is not None:\n            link = f\"{url_dashboard_base}/modelRegistry/{username}-registry/registeredModels/1/versions/{version_id}/details\"\
+          \n\n"
+        image: python:3.11
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.12.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'pyyaml>=6.0.1'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model(\n    dataset_zip: Input[Dataset],       \n    base_model:\
+          \ Input[Model],         \n    fine_tuned_model: Output[Model],   \n    epochs:\
+          \ int = 1,\n    imgsz: int = 640,\n    batch: int = 2,\n    fraction: float\
+          \ = 0.1\n):\n    import os, zipfile, shutil, time, hashlib, json\n    from\
+          \ pathlib import Path\n    from ultralytics import YOLO\n\n\n    # workspace\n\
+          \    work = Path(\"/tmp/work\"); work.mkdir(parents=True, exist_ok=True)\n\
+          \    ds_root = work / \"dataset\"; ds_root.mkdir(parents=True, exist_ok=True)\n\
+          \    model_root = work / \"base_model\"; model_root.mkdir(parents=True,\
+          \ exist_ok=True)\n    runs_root = work / \"runs\"; runs_root.mkdir(parents=True,\
+          \ exist_ok=True)\n\n    # Dataset: unzip\n    ds_src = Path(dataset_zip.path)\n\
+          \    print(f\"[INFO] Input dataset path: {ds_src}\")\n    if ds_src.is_file()\
+          \ and ds_src.suffix == \".zip\":\n        with zipfile.ZipFile(ds_src, \"\
+          r\") as z:\n            z.extractall(ds_root)\n        print(f\"[INFO] Dataset\
+          \ estratto in: {ds_root}\")\n    elif ds_src.is_dir():\n        shutil.copytree(ds_src,\
+          \ ds_root, dirs_exist_ok=True)\n        print(f\"[INFO] Dataset copiato\
+          \ in: {ds_root}\")\n    else:\n        raise ValueError(f\"Formato dataset\
+          \ non supportato: {ds_src}\")\n\n    data_yaml = next(ds_root.rglob(\"data.yaml\"\
+          ), None)\n    if not data_yaml:\n        raise FileNotFoundError(\"data.yaml\
+          \ non trovato nel dataset estratto\")\n    print(f\"[INFO] Using data.yaml:\
+          \ {data_yaml}\")\n\n    # \n    msrc = Path(base_model.path)\n    print(f\"\
+          [INFO] Base model artifact: {msrc}\")\n\n    pt_candidates = []\n    if\
+          \ msrc.is_file() and msrc.suffix == \".zip\":\n        with zipfile.ZipFile(msrc,\
+          \ \"r\") as z:\n            z.extractall(model_root)\n        pt_candidates\
+          \ = sorted(model_root.rglob(\"*.pt\"))\n    elif msrc.is_file() and msrc.suffix\
+          \ == \".pt\":\n        pt_candidates = [msrc]\n    elif msrc.is_dir():\n\
+          \        pt_candidates = sorted(msrc.rglob(\"*.pt\"))\n    else:\n     \
+          \   raise ValueError(f\"Atteso ZIP/.pt/dir per il modello, trovato: {msrc}\"\
+          )\n\n    if not pt_candidates:\n        raise FileNotFoundError(\"Nessun\
+          \ file .pt trovato nel modello base\")\n    weights_path = str(pt_candidates[0])\n\
+          \    print(f\"[INFO] Using base weights: {weights_path}\")\n\n    # Training\
+          \ \n    model = YOLO(weights_path)\n    results = model.train(\n       \
+          \ data=str(data_yaml),\n        epochs=epochs,\n        imgsz=imgsz,\n \
+          \       batch=batch,\n        fraction=fraction,\n        project=str(runs_root),\
+          \  \n        name=\"train\",             \n        exist_ok=True,\n    )\n\
+          \n    #Individua la cartella risultati reale\n    save_dir = None\n    if\
+          \ getattr(results, \"save_dir\", None):\n        save_dir = Path(results.save_dir)\n\
+          \    elif getattr(getattr(model, \"trainer\", None), \"save_dir\", None):\n\
+          \        save_dir = Path(model.trainer.save_dir)\n    else:\n        save_dir\
+          \ = runs_root / \"train\"  \n\n    print(f\"Ultralytics save_dir: {save_dir}\"\
+          )\n\n    # Trova best/last sotto save_dir/weights\n    weights_dir = save_dir\
+          \ / \"weights\"\n    best = None\n    if weights_dir.exists():\n       \
+          \ c_best = sorted(weights_dir.glob(\"best*.pt\"), key=lambda p: p.stat().st_mtime,\
+          \ reverse=True)\n        c_last = sorted(weights_dir.glob(\"last*.pt\"),\
+          \ key=lambda p: p.stat().st_mtime, reverse=True)\n        best = (c_best\
+          \ + c_last)[0] if (c_best or c_last) else None\n\n    if not (best and best.exists()):\n\
+          \        # log di supporto per debugging\n        print(f\"Nessun best.pt/last.pt\
+          \ trovato in {weights_dir}\")\n        print(\"Contenuto save_dir:\")\n\
+          \        for p in save_dir.rglob(\"*\"):\n            if p.is_file():\n\
+          \                print(\" -\", p)\n        raise FileNotFoundError(f\"Nessun\
+          \ best.pt/last.pt trovato in {weights_dir}\")\n\n\n    #zip model\n    model_zip_path\
+          \ = Path(str(fine_tuned_model.path) + \".zip\")\n    model_zip_path.parent.mkdir(parents=True,\
+          \ exist_ok=True)\n\n    with zipfile.ZipFile(model_zip_path, \"w\", zipfile.ZIP_DEFLATED)\
+          \ as zf:\n        # includi almeno il best.pt (puoi aggiungere altro se\
+          \ vuoi)\n        zf.write(best, arcname=\"best.pt\")\n\n    # reindirizza\
+          \ l'artifact al file zip\n    fine_tuned_model._set_path(str(model_zip_path))\n\
+          \n\n    if not model_zip_path.exists() or model_zip_path.stat().st_size\
+          \ == 0:\n        raise RuntimeError(f\"Model zip non scritto correttamente:\
+          \ {model_zip_path}\")\n    print(f\"[SUCCESS] Model zipped: {model_zip_path}\
+          \ size={model_zip_path.stat().st_size}\")\n\n    # Metadati utili\n    fine_tuned_model.metadata[\"\
+          framework\"]= \"ultralytics\"\n    fine_tuned_model.metadata[\"format\"\
+          ]= \"pt\"\n    fine_tuned_model.metadata[\"compression\"]= \"zip\"\n   \
+          \ fine_tuned_model.metadata[\"filename\"]= \"best.pt\"\n\n\n    # Output:\
+          \ best.pt alla root dell'artifact\n    #out_dir = Path(fine_tuned_model.path);\
+          \ out_dir.mkdir(parents=True, exist_ok=True)\n    #shutil.copy2(best, out_dir\
+          \ / \"best.pt\")\n    #print(f\"[SUCCESS] Saved model to: {out_dir / 'best.pt'}\"\
+          )\n\n"
+        image: ultralytics/ultralytics:latest
+pipelineInfo:
+  description: Dense Neural Network Image Detector based on YOLO
+  name: yolo-custom-training-pipeline-test
+root:
+  dag:
+    tasks:
+      convert-to-onnx:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-convert-to-onnx
+        dependentTasks:
+        - train-model
+        inputs:
+          artifacts:
+            fine_tuned_model_zip:
+              taskOutputArtifact:
+                outputArtifactKey: fine_tuned_model
+                producerTask: train-model
+        taskInfo:
+          name: convert-to-onnx
+      fetch-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-fetch-data
+        inputs:
+          parameters:
+            rf_project:
+              runtimeValue:
+                constant: fire-smoke-detection-yolov11
+            rf_workspace:
+              runtimeValue:
+                constant: sayed-gamall
+            version:
+              componentInputParameter: version
+        taskInfo:
+          name: fetch-data
+      fetch-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-fetch-model
+        inputs:
+          parameters:
+            hyperparameters:
+              componentInputParameter: hyperparameters
+            model_name:
+              runtimeValue:
+                constant: Ultralytics/YOLO11
+            version:
+              componentInputParameter: version
+        taskInfo:
+          name: fetch-model
+      push-to-s3-and-model-registry:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-push-to-s3-and-model-registry
+        dependentTasks:
+        - convert-to-onnx
+        inputs:
+          artifacts:
+            onnx_model:
+              taskOutputArtifact:
+                outputArtifactKey: onnx_model
+                producerTask: convert-to-onnx
+          parameters:
+            version:
+              componentInputParameter: version
+        taskInfo:
+          name: push-to-s3-and-model-registry
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - fetch-data
+        - fetch-model
+        inputs:
+          artifacts:
+            base_model:
+              taskOutputArtifact:
+                outputArtifactKey: original_model
+                producerTask: fetch-model
+            dataset_zip:
+              taskOutputArtifact:
+                outputArtifactKey: dataset
+                producerTask: fetch-data
+        taskInfo:
+          name: train-model
+  inputDefinitions:
+    parameters:
+      hyperparameters:
+        parameterType: STRUCT
+      version:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.12.2
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-fetch-data:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: ROBOFLOW_API_KEY
+              secretKey: ROBOFLOW_API_KEY
+            secretName: roboflow
+            secretNameParameter:
+              runtimeValue:
+                constant: roboflow
+        exec-fetch-model:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: HF_NAME
+              secretKey: HF_NAME
+            - envVar: HF_TOKEN
+              secretKey: HF_TOKEN
+            secretName: huggingface
+            secretNameParameter:
+              runtimeValue:
+                constant: huggingface
+        exec-push-to-s3-and-model-registry:
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: AWS_ACCESS_KEY_ID
+              secretKey: AWS_ACCESS_KEY_ID
+            - envVar: AWS_SECRET_ACCESS_KEY
+              secretKey: AWS_SECRET_ACCESS_KEY
+            - envVar: AWS_S3_ENDPOINT
+              secretKey: AWS_S3_ENDPOINT
+            - envVar: AWS_S3_BUCKET
+              secretKey: AWS_S3_BUCKET
+            secretName: s3-models
+            secretNameParameter:
+              runtimeValue:
+                constant: s3-models
