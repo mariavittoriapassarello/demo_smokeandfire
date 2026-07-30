@@ -1,4 +1,4 @@
-WIP
+WIP - updating tutorial for OpenShift AI version 3.4  
 
 Fine-tuning of a YOLOv11 model on Red Hat OpenShift AI 2.23. The training has been done on Smoke and Fire images belonging to a public dataset downloaded from Roboflow (at https://universe.roboflow.com/sayed-gamall/fire-smoke-detection-yolov11) 
 
