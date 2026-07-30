@@ -26,6 +26,5 @@ Improvements to be made
 - enable GPU execution of the kfp pipeline
 - generate training metrics, graphs, and plots as pipeline artifacts for visualization in the OpenShift AI dashboard.
 - try Kubeflow Trainer
-- integrate bias and drift monitoring with Trusty AI
 - create an application for real time monitoring with cameras, generating alerts when detecting smoke/fire 
 
